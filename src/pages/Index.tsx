@@ -4,6 +4,7 @@ import SensorMonitoring from "@/components/SensorMonitoring";
 import AlertSystem from "@/components/AlertSystem";
 import MetricsChart from "@/components/MetricsChart";
 import SystemStatus from "@/components/SystemStatus";
+import FaceDetection from "@/components/FaceDetection";
 
 const Index = () => {
   const [alertLevel, setAlertLevel] = useState<0 | 1 | 2 | 3>(0);
@@ -70,7 +71,12 @@ const Index = () => {
 
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Driver Status - Takes 2 columns on large screens */}
+          {/* Face Detection - New Component */}
+          <div className="lg:col-span-1">
+            <FaceDetection fatigueLevel={fatigueLevel} />
+          </div>
+
+          {/* Driver Status */}
           <div className="lg:col-span-2">
             <DriverStatusCard
               fatigueLevel={fatigueLevel}
@@ -81,7 +87,7 @@ const Index = () => {
           </div>
 
           {/* Sensor Monitoring */}
-          <div>
+          <div className="lg:col-span-3">
             <SensorMonitoring alertLevel={alertLevel} />
           </div>
         </div>
