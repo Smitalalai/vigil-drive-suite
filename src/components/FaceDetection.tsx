@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Eye, AlertTriangle, Camera, CameraOff } from "lucide-react";
 import { useEffect, useState, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { FaceMesh } from "@mediapipe/face_mesh";
+import { Camera as CameraUtils } from "@mediapipe/camera_utils";
 
 interface FaceDetectionProps {
   fatigueLevel: number;
@@ -23,30 +25,295 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
   const [isEyesClosed, setIsEyesClosed] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [faceDetected, setFaceDetected] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const faceMeshRef = useRef<FaceMesh | null>(null);
+  const cameraRef = useRef<any>(null);
   const { toast } = useToast();
+  
+  // Detection thresholds
+  const EAR_THRESHOLD = 0.21;
+  const MAR_THRESHOLD = 0.6;
+  const EAR_CONSEC_FRAMES = 20;
+  const MAR_CONSEC_FRAMES = 15;
+  
+  // Counters
+  const earCounterRef = useRef(0);
+  const marCounterRef = useRef(0);
+  const blinkCounterRef = useRef(0);
+  const totalBlinkRef = useRef(0);
+  const closedEyesFramesRef = useRef(0);
+  const totalFramesRef = useRef(0);
+  const lastBeepRef = useRef(0);
+  
+  // Landmark indices for MediaPipe Face Mesh
+  const LEFT_EYE = [362, 385, 387, 263, 373, 380];
+  const RIGHT_EYE = [33, 160, 158, 133, 153, 144];
+  const MOUTH = [61, 291, 0, 17, 269, 405];
+  
+  // Calculate Euclidean distance
+  const euclideanDistance = (point1: any, point2: any) => {
+    const dx = point1.x - point2.x;
+    const dy = point1.y - point2.y;
+    const dz = point1.z - point2.z;
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  };
+  
+  // Calculate Eye Aspect Ratio (EAR)
+  const calculateEAR = (eyeLandmarks: any[]) => {
+    const A = euclideanDistance(eyeLandmarks[1], eyeLandmarks[5]);
+    const B = euclideanDistance(eyeLandmarks[2], eyeLandmarks[4]);
+    const C = euclideanDistance(eyeLandmarks[0], eyeLandmarks[3]);
+    return (A + B) / (2.0 * C);
+  };
+  
+  // Calculate Mouth Aspect Ratio (MAR)
+  const calculateMAR = (mouthLandmarks: any[]) => {
+    const vertical = euclideanDistance(mouthLandmarks[1], mouthLandmarks[5]);
+    const horizontal = euclideanDistance(mouthLandmarks[0], mouthLandmarks[3]);
+    return vertical / horizontal;
+  };
+  
+  // Play alert sound
+  const playAlertSound = () => {
+    const currentTime = Date.now();
+    if (currentTime - lastBeepRef.current > 2000) {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+      
+      lastBeepRef.current = currentTime;
+    }
+  };
 
+  // Initialize MediaPipe Face Mesh
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      faceMeshRef.current = new FaceMesh({
+        locateFile: (file) => {
+          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+        }
+      });
+      
+      faceMeshRef.current.setOptions({
+        maxNumFaces: 1,
+        refineLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+      
+      faceMeshRef.current.onResults(onFaceMeshResults);
+    }
+    
+    return () => {
+      if (faceMeshRef.current) {
+        faceMeshRef.current.close();
+      }
+    };
+  }, []);
+  
+  // Process face mesh results
+  const onFaceMeshResults = (results: any) => {
+    if (!canvasRef.current || !videoRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    totalFramesRef.current += 1;
+    
+    if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+      setFaceDetected(true);
+      const landmarks = results.multiFaceLandmarks[0];
+      
+      // Get eye landmarks
+      const leftEyeLandmarks = LEFT_EYE.map(i => landmarks[i]);
+      const rightEyeLandmarks = RIGHT_EYE.map(i => landmarks[i]);
+      const mouthLandmarks = MOUTH.map(i => landmarks[i]);
+      
+      // Calculate metrics
+      const leftEAR = calculateEAR(leftEyeLandmarks);
+      const rightEAR = calculateEAR(rightEyeLandmarks);
+      const avgEAR = (leftEAR + rightEAR) / 2.0;
+      const mar = calculateMAR(mouthLandmarks);
+      
+      setEar(avgEAR);
+      
+      // Drowsiness detection
+      if (avgEAR < EAR_THRESHOLD) {
+        earCounterRef.current += 1;
+        closedEyesFramesRef.current += 1;
+        setIsEyesClosed(true);
+        
+        if (earCounterRef.current >= EAR_CONSEC_FRAMES) {
+          playAlertSound();
+          toast({
+            title: "🚨 DROWSINESS ALERT!",
+            description: "Eyes closing frequently. Wake up!",
+            variant: "destructive",
+          });
+        }
+      } else {
+        earCounterRef.current = 0;
+        setIsEyesClosed(false);
+      }
+      
+      // Blink detection
+      if (avgEAR < 0.18) {
+        blinkCounterRef.current += 1;
+      } else {
+        if (blinkCounterRef.current >= 2 && blinkCounterRef.current <= 5) {
+          totalBlinkRef.current += 1;
+        }
+        blinkCounterRef.current = 0;
+      }
+      
+      // Yawn detection
+      if (mar > MAR_THRESHOLD) {
+        marCounterRef.current += 1;
+        
+        if (marCounterRef.current >= MAR_CONSEC_FRAMES) {
+          setYawnCount(prev => prev + 1);
+          toast({
+            title: "😮 YAWNING DETECTED",
+            description: "Fatigue signs detected. Take a break!",
+          });
+          marCounterRef.current = 0;
+        }
+      } else {
+        marCounterRef.current = 0;
+      }
+      
+      // Calculate PERCLOS
+      const newPerclos = (closedEyesFramesRef.current / totalFramesRef.current) * 100;
+      setPerclos(newPerclos);
+      
+      // Calculate blink rate (per minute)
+      const newBlinkRate = (totalBlinkRef.current / totalFramesRef.current) * 1800; // 30fps * 60s
+      setBlinkRate(newBlinkRate);
+      
+      // Draw landmarks on canvas
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.translate(-canvas.width, 0);
+      
+      // Draw eyes
+      const eyeColor = avgEAR > EAR_THRESHOLD ? '#00ff00' : '#ff0000';
+      drawLandmarks(ctx, leftEyeLandmarks, eyeColor, canvas.width, canvas.height);
+      drawLandmarks(ctx, rightEyeLandmarks, eyeColor, canvas.width, canvas.height);
+      
+      // Draw mouth
+      const mouthColor = mar < MAR_THRESHOLD ? '#00ff00' : '#ffa500';
+      drawLandmarks(ctx, mouthLandmarks, mouthColor, canvas.width, canvas.height);
+      
+      ctx.restore();
+      
+      // Notify parent
+      onFacialMetricsChange?.({
+        ear: avgEAR,
+        perclos: newPerclos,
+        blinkRate: newBlinkRate,
+        yawnCount,
+      });
+    } else {
+      setFaceDetected(false);
+    }
+  };
+  
+  const drawLandmarks = (ctx: CanvasRenderingContext2D, landmarks: any[], color: string, width: number, height: number) => {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    
+    // Draw points
+    landmarks.forEach(landmark => {
+      const x = landmark.x * width;
+      const y = landmark.y * height;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+    
+    // Draw lines connecting points
+    ctx.beginPath();
+    landmarks.forEach((landmark, i) => {
+      const x = landmark.x * width;
+      const y = landmark.y * height;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.closePath();
+    ctx.stroke();
+  };
+  
   // Start/stop camera
   const startCamera = async () => {
     try {
       setCameraError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          facingMode: "user"
-        }
-      });
       
-      if (videoRef.current) {
+      if (videoRef.current && faceMeshRef.current) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: "user"
+          }
+        });
+        
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
+        
+        // Wait for video to be ready
+        await new Promise((resolve) => {
+          if (videoRef.current) {
+            videoRef.current.onloadedmetadata = resolve;
+          }
+        });
+        
+        // Set canvas size
+        if (canvasRef.current && videoRef.current) {
+          canvasRef.current.width = videoRef.current.videoWidth;
+          canvasRef.current.height = videoRef.current.videoHeight;
+        }
+        
+        // Start MediaPipe camera
+        cameraRef.current = new CameraUtils(videoRef.current, {
+          onFrame: async () => {
+            if (faceMeshRef.current && videoRef.current) {
+              await faceMeshRef.current.send({ image: videoRef.current });
+            }
+          },
+          width: 1280,
+          height: 720
+        });
+        
+        await cameraRef.current.start();
+        
         setIsCameraActive(true);
         toast({
           title: "Camera Active",
-          description: "Live face monitoring started",
+          description: "Real-time face detection started",
         });
       }
     } catch (error) {
@@ -62,6 +329,10 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
   };
 
   const stopCamera = () => {
+    if (cameraRef.current) {
+      cameraRef.current.stop();
+      cameraRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
@@ -70,6 +341,7 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
       videoRef.current.srcObject = null;
     }
     setIsCameraActive(false);
+    setFaceDetected(false);
     toast({
       title: "Camera Stopped",
       description: "Face monitoring paused",
@@ -79,62 +351,14 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
   // Cleanup camera on unmount
   useEffect(() => {
     return () => {
+      if (cameraRef.current) {
+        cameraRef.current.stop();
+      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
-
-  // Simulate real-time facial metrics
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // EAR decreases with fatigue (normal: 0.25-0.35, drowsy: <0.20)
-      const newEar = Math.max(0.15, 0.32 - (fatigueLevel / 100) * 0.15 + (Math.random() - 0.5) * 0.05);
-      setEar(newEar);
-
-      // PERCLOS increases with fatigue (normal: <15%, drowsy: >20%)
-      const newPerclos = Math.min(50, 8 + (fatigueLevel / 100) * 30 + (Math.random() - 0.5) * 5);
-      setPerclos(newPerclos);
-
-      // Blink rate changes (normal: 15-20/min, drowsy: <10/min or >30/min)
-      const newBlinkRate = Math.max(5, 15 - (fatigueLevel / 100) * 8 + (Math.random() - 0.5) * 4);
-      setBlinkRate(newBlinkRate);
-
-      // Yawn detection increases with fatigue
-      if (Math.random() < (fatigueLevel / 100) * 0.05) {
-        setYawnCount(prev => prev + 1);
-      }
-
-      // Simulate eye closure
-      setIsEyesClosed(newEar < 0.22 && Math.random() < 0.3);
-
-      // Notify parent component
-      onFacialMetricsChange?.({
-        ear: newEar,
-        perclos: newPerclos,
-        blinkRate: newBlinkRate,
-        yawnCount,
-      });
-
-      // Show alerts based on conditions
-      if (isCameraActive) {
-        if (newPerclos > 30 && fatigueLevel > 70) {
-          toast({
-            title: "⚠️ Drowsiness Alert!",
-            description: "Eyes closing frequently. Consider taking a break.",
-            variant: "destructive",
-          });
-        } else if (yawnCount > 3 && fatigueLevel > 60) {
-          toast({
-            title: "⚠️ Fatigue Warning",
-            description: `${yawnCount} yawns detected. Rest recommended.`,
-          });
-        }
-      }
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [fatigueLevel, yawnCount, onFacialMetricsChange, isCameraActive, toast]);
 
   const getEarStatus = () => {
     if (ear > 0.25) return { status: "Normal", color: "text-success" };
@@ -186,7 +410,14 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
           playsInline
           muted
           className="absolute inset-0 w-full h-full object-cover"
-          style={{ transform: 'scaleX(-1)' }}
+          style={{ transform: 'scaleX(-1)', display: isCameraActive ? 'block' : 'none' }}
+        />
+        
+        {/* Canvas for landmark drawing */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full object-cover"
+          style={{ transform: 'scaleX(-1)', display: isCameraActive ? 'block' : 'none' }}
         />
 
         {/* Overlay when camera is off */}
@@ -195,37 +426,29 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
             <div className="text-center">
               <Camera className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
               <p className="text-sm text-muted-foreground">
-                {cameraError || "Click 'Start Camera' to begin monitoring"}
+                {cameraError || "Click 'Start Camera' to begin real-time face detection"}
               </p>
             </div>
           </div>
         )}
-
-        {/* Face Detection Overlay (only when camera is active) */}
-        {isCameraActive && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="relative">
-              {/* Face Detection Frame */}
-              <div className={`w-48 h-56 rounded-lg border-4 transition-all duration-300 ${
-                fatigueLevel > 60 ? "border-destructive animate-pulse" : 
-                fatigueLevel > 40 ? "border-warning" : "border-success"
-              }`}>
-                {/* Eye Detection Points */}
-                <div className="absolute top-16 left-12">
-                  <Eye className={`w-5 h-5 ${isEyesClosed ? "text-destructive" : "text-success"}`} />
-                </div>
-                <div className="absolute top-16 right-12">
-                  <Eye className={`w-5 h-5 ${isEyesClosed ? "text-destructive" : "text-success"}`} />
-                </div>
-
-                {/* Detection Status */}
-                <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap">
-                  <Badge variant={fatigueLevel > 60 ? "destructive" : "default"} className="text-xs">
-                    Face Tracked
-                  </Badge>
-                </div>
-              </div>
+        
+        {/* No face detected warning */}
+        {isCameraActive && !faceDetected && (
+          <div className="absolute inset-0 flex items-center justify-center bg-destructive/10 backdrop-blur-sm">
+            <div className="text-center">
+              <AlertTriangle className="w-16 h-16 text-destructive mx-auto mb-4 animate-pulse" />
+              <p className="text-lg font-semibold text-destructive">⚠ NO FACE DETECTED</p>
+              <p className="text-sm text-muted-foreground mt-2">Position your face in the camera view</p>
             </div>
+          </div>
+        )}
+
+        {/* Face Detection Status */}
+        {isCameraActive && faceDetected && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2">
+            <Badge variant={ear < EAR_THRESHOLD ? "destructive" : "default"} className="text-xs">
+              {ear < EAR_THRESHOLD ? "⚠ DROWSINESS DETECTED" : "✓ Face Tracked"}
+            </Badge>
           </div>
         )}
 
@@ -238,10 +461,10 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
         )}
 
         {/* Alert Indicator (only when camera is active) */}
-        {isCameraActive && fatigueLevel > 60 && (
+        {isCameraActive && faceDetected && ear < EAR_THRESHOLD && (
           <div className="absolute top-3 right-3 bg-destructive/80 backdrop-blur-sm px-3 py-1.5 rounded-full flex items-center gap-2 animate-pulse">
             <AlertTriangle className="w-4 h-4 text-destructive-foreground" />
-            <span className="text-xs font-semibold text-destructive-foreground">DROWSINESS DETECTED</span>
+            <span className="text-xs font-semibold text-destructive-foreground">🚨 DROWSINESS ALERT</span>
           </div>
         )}
       </div>
@@ -292,25 +515,27 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
 
         {/* AI Decision */}
         <div className={`p-3 rounded-lg border ${
-          fatigueLevel > 80 ? "bg-destructive/10 border-destructive/30" :
-          fatigueLevel > 60 ? "bg-warning/10 border-warning/30" :
-          fatigueLevel > 40 ? "bg-alert/10 border-alert/30" :
+          ear < 0.18 || perclos > 30 ? "bg-destructive/10 border-destructive/30" :
+          ear < EAR_THRESHOLD || perclos > 20 ? "bg-warning/10 border-warning/30" :
+          ear < 0.24 || perclos > 15 ? "bg-alert/10 border-alert/30" :
           "bg-success/10 border-success/30"
         }`}>
           <div className="flex items-start gap-2">
             <AlertTriangle className={`w-4 h-4 mt-0.5 ${
-              fatigueLevel > 80 ? "text-destructive" :
-              fatigueLevel > 60 ? "text-warning" :
-              fatigueLevel > 40 ? "text-alert" :
+              ear < 0.18 || perclos > 30 ? "text-destructive" :
+              ear < EAR_THRESHOLD || perclos > 20 ? "text-warning" :
+              ear < 0.24 || perclos > 15 ? "text-alert" :
               "text-success"
             }`} />
             <div className="flex-1">
               <div className="text-sm font-semibold text-foreground mb-1">AI Decision</div>
               <div className="text-xs text-muted-foreground">
-                {fatigueLevel > 80 && "CRITICAL: Immediate intervention required. Driver showing severe drowsiness signs."}
-                {fatigueLevel > 60 && fatigueLevel <= 80 && "WARNING: High fatigue detected. Recommend rest break within 15 minutes."}
-                {fatigueLevel > 40 && fatigueLevel <= 60 && "CAUTION: Early fatigue signs detected. Monitor closely."}
-                {fatigueLevel <= 40 && "NORMAL: Driver alert. All facial parameters within normal range."}
+                {!isCameraActive && "Start camera to begin real-time drowsiness detection."}
+                {isCameraActive && !faceDetected && "No face detected. Position yourself in front of the camera."}
+                {isCameraActive && faceDetected && ear < 0.18 && "🚨 CRITICAL: Severe drowsiness detected! Immediate intervention required."}
+                {isCameraActive && faceDetected && ear >= 0.18 && ear < EAR_THRESHOLD && "⚠ WARNING: High fatigue detected. Recommend rest break soon."}
+                {isCameraActive && faceDetected && ear >= EAR_THRESHOLD && ear < 0.24 && "⚠ CAUTION: Early fatigue signs. Monitor closely."}
+                {isCameraActive && faceDetected && ear >= 0.24 && "✅ NORMAL: Driver alert. All facial parameters within normal range."}
               </div>
             </div>
           </div>
