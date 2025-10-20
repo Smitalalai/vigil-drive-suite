@@ -8,16 +8,13 @@ import { FaceMesh } from "@mediapipe/face_mesh";
 import { Camera as CameraUtils } from "@mediapipe/camera_utils";
 
 interface FaceDetectionProps {
-  fatigueLevel: number;
-  onFacialMetricsChange?: (metrics: {
-    ear: number;
-    perclos: number;
-    blinkRate: number;
-    yawnCount: number;
+  onMetricsUpdate: (metrics: { 
+    fatigueLevel: number; 
+    alertLevel: 0 | 1 | 2 | 3;
   }) => void;
 }
 
-const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionProps) => {
+const FaceDetection = ({ onMetricsUpdate }: FaceDetectionProps) => {
   const [ear, setEar] = useState(0.32); // Eye Aspect Ratio
   const [perclos, setPerclos] = useState(8); // Percentage of Eye Closure
   const [blinkRate, setBlinkRate] = useState(15); // Blinks per minute
@@ -26,6 +23,8 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [faceDetected, setFaceDetected] = useState(false);
+  const [fatigueLevel, setFatigueLevel] = useState(0);
+  const [alertLevel, setAlertLevel] = useState<0 | 1 | 2 | 3>(0);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -210,6 +209,57 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
       const newBlinkRate = (totalBlinkRef.current / totalFramesRef.current) * 1800; // 30fps * 60s
       setBlinkRate(newBlinkRate);
       
+      // ========== CALCULATE FATIGUE LEVEL ==========
+      // Multi-metric fatigue calculation with weighted scores
+      
+      // 1. PERCLOS Score (40% weight) - Most reliable indicator
+      const perclosScore = Math.min(100, (newPerclos / 30) * 100); // 30% PERCLOS = max fatigue
+      
+      // 2. EAR Score (30% weight) - Eye closure detection
+      const earScore = avgEAR < EAR_THRESHOLD 
+        ? Math.min(100, ((EAR_THRESHOLD - avgEAR) / EAR_THRESHOLD) * 150) 
+        : 0;
+      
+      // 3. Yawn Score (20% weight)
+      const yawnScore = Math.min(100, (yawnCount / 5) * 100); // 5 yawns = max contribution
+      
+      // 4. Blink Rate Score (10% weight) - Low blink rate indicates fatigue
+      const normalBlinkRate = 15;
+      const blinkScore = newBlinkRate < normalBlinkRate 
+        ? Math.min(100, ((normalBlinkRate - newBlinkRate) / normalBlinkRate) * 80) 
+        : 0;
+      
+      // Weighted fatigue calculation
+      const calculatedFatigue = Math.round(
+        (perclosScore * 0.4) + 
+        (earScore * 0.3) + 
+        (yawnScore * 0.2) + 
+        (blinkScore * 0.1)
+      );
+      
+      setFatigueLevel(calculatedFatigue);
+      
+      // ========== DETERMINE ALERT LEVEL ==========
+      let newAlertLevel: 0 | 1 | 2 | 3 = 0;
+      
+      if (calculatedFatigue > 75 || avgEAR < 0.18) {
+        newAlertLevel = 3; // Critical - Immediate intervention
+      } else if (calculatedFatigue > 50 || avgEAR < 0.21) {
+        newAlertLevel = 2; // High - Strong warning
+      } else if (calculatedFatigue > 25 || avgEAR < 0.24) {
+        newAlertLevel = 1; // Moderate - Early intervention
+      } else {
+        newAlertLevel = 0; // Normal - All clear
+      }
+      
+      setAlertLevel(newAlertLevel);
+      
+      // Emit metrics to parent component
+      onMetricsUpdate({
+        fatigueLevel: calculatedFatigue,
+        alertLevel: newAlertLevel
+      });
+      
       // Draw landmarks on canvas
       ctx.save();
       ctx.scale(-1, 1);
@@ -225,16 +275,15 @@ const FaceDetection = ({ fatigueLevel, onFacialMetricsChange }: FaceDetectionPro
       drawLandmarks(ctx, mouthLandmarks, mouthColor, canvas.width, canvas.height);
       
       ctx.restore();
-      
-      // Notify parent
-      onFacialMetricsChange?.({
-        ear: avgEAR,
-        perclos: newPerclos,
-        blinkRate: newBlinkRate,
-        yawnCount,
-      });
     } else {
       setFaceDetected(false);
+      // Reset to normal when no face detected
+      setFatigueLevel(0);
+      setAlertLevel(0);
+      onMetricsUpdate({
+        fatigueLevel: 0,
+        alertLevel: 0
+      });
     }
   };
   

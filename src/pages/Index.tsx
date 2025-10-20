@@ -8,19 +8,13 @@ import FaceDetection from "@/components/FaceDetection";
 
 const Index = () => {
   const [alertLevel, setAlertLevel] = useState<0 | 1 | 2 | 3>(0);
-  const [fatigueLevel, setFatigueLevel] = useState(20);
+  const [fatigueLevel, setFatigueLevel] = useState(0);
   const [heartRate, setHeartRate] = useState(72);
   const [stressLevel, setStressLevel] = useState(15);
 
-  // Simulate real-time data updates
+  // Simulate heart rate and stress (non-facial metrics)
   useEffect(() => {
     const interval = setInterval(() => {
-      // Simulate gradual fatigue increase
-      setFatigueLevel((prev) => {
-        const newValue = prev + (Math.random() - 0.3) * 5;
-        return Math.max(0, Math.min(100, newValue));
-      });
-
       // Simulate heart rate variation
       setHeartRate((prev) => {
         const newValue = prev + (Math.random() - 0.5) * 3;
@@ -37,18 +31,11 @@ const Index = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Determine alert level based on fatigue
-  useEffect(() => {
-    if (fatigueLevel > 80) {
-      setAlertLevel(3);
-    } else if (fatigueLevel > 60) {
-      setAlertLevel(2);
-    } else if (fatigueLevel > 40) {
-      setAlertLevel(1);
-    } else {
-      setAlertLevel(0);
-    }
-  }, [fatigueLevel]);
+  // Handle metrics update from face detection
+  const handleMetricsUpdate = (metrics: { fatigueLevel: number; alertLevel: 0 | 1 | 2 | 3 }) => {
+    setFatigueLevel(metrics.fatigueLevel);
+    setAlertLevel(metrics.alertLevel);
+  };
 
   return (
     <div className="min-h-screen bg-background p-4 md:p-6 lg:p-8">
@@ -71,9 +58,9 @@ const Index = () => {
 
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Face Detection - New Component */}
+          {/* Face Detection - AI Detection Component */}
           <div className="lg:col-span-1">
-            <FaceDetection fatigueLevel={fatigueLevel} />
+            <FaceDetection onMetricsUpdate={handleMetricsUpdate} />
           </div>
 
           {/* Driver Status */}
