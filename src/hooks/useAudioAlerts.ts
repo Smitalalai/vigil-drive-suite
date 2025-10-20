@@ -16,23 +16,23 @@ const ALERT_SOUNDS: Record<number, AudioAlertConfig> = {
     pattern: 'single',
   },
   1: {
-    frequency: 440, // A4 note - gentle warning
-    duration: 0.2,
-    volume: 0.15,
+    frequency: 300, // Low frequency - gentle warning
+    duration: 0.3,
+    volume: 0.2,
     pattern: 'single',
     interval: 8000, // Every 8 seconds
   },
   2: {
-    frequency: 880, // A5 note - urgent warning
-    duration: 0.3,
-    volume: 0.25,
+    frequency: 600, // Medium frequency - urgent warning
+    duration: 0.4,
+    volume: 0.3,
     pattern: 'double',
     interval: 4000, // Every 4 seconds
   },
   3: {
-    frequency: 1320, // E6 note - critical alert
-    duration: 0.4,
-    volume: 0.35,
+    frequency: 1200, // High frequency - critical alert
+    duration: 0.5,
+    volume: 0.4,
     pattern: 'continuous',
     interval: 2000, // Every 2 seconds
   },
@@ -63,6 +63,16 @@ export const useAudioAlerts = (alertLevel: 0 | 1 | 2 | 3, enabled: boolean = tru
 
     oscillator.start(audioContext.currentTime);
     oscillator.stop(audioContext.currentTime + duration);
+  };
+
+  const speakWakeUp = () => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance('Wake up!');
+      utterance.rate = 1.2;
+      utterance.pitch = 1.2;
+      utterance.volume = 1;
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   const playPattern = (config: AudioAlertConfig) => {
@@ -96,12 +106,21 @@ export const useAudioAlerts = (alertLevel: 0 | 1 | 2 | 3, enabled: boolean = tru
         break;
       
       case 'continuous':
-        // Play three quick beeps for continuous pattern
+        // Play escalating frequency sweep (low to high) with "Wake Up" voice
+        const startFreq = config.frequency * 0.7;
+        const endFreq = config.frequency * 1.3;
+        
         [0, 1, 2].forEach((i) => {
+          const freq = startFreq + (endFreq - startFreq) * (i / 2);
           setTimeout(() => {
-            playTone(config.frequency, config.duration * 0.7, config.volume);
+            playTone(freq, config.duration * 0.7, config.volume);
           }, i * (config.duration * 1000 * 0.5));
         });
+        
+        // Add "Wake Up!" voice alert for critical level
+        setTimeout(() => {
+          speakWakeUp();
+        }, 200);
         break;
     }
   };

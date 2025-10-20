@@ -51,7 +51,7 @@ const AlertSystem = ({ alertLevel, fatigueLevel }: AlertSystemProps) => {
     if (alertLevel === 2) {
       return "Moderate fatigue detected. Please pull over at the next safe location.";
     }
-    return "Critical alert! High fatigue level. Initiating safety protocols.";
+    return "⚠️ WAKE UP! Critical fatigue detected. Initiating safety protocols.";
   };
 
   return (
@@ -124,8 +124,18 @@ const AlertSystem = ({ alertLevel, fatigueLevel }: AlertSystemProps) => {
         </div>
       </div>
 
-      <div className="mb-6 p-4 bg-background/50 rounded-lg">
-        <p className="text-foreground font-medium">{getAlertMessage()}</p>
+      <div className={`mb-6 p-4 rounded-lg transition-all ${
+        alertLevel === 3 
+          ? "bg-destructive/20 animate-pulse" 
+          : "bg-background/50"
+      }`}>
+        <p className={`font-medium ${
+          alertLevel === 3 
+            ? "text-destructive text-xl" 
+            : "text-foreground"
+        }`}>
+          {getAlertMessage()}
+        </p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
