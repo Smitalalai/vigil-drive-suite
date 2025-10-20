@@ -1,6 +1,9 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Bell, Volume2, Shield, AlertTriangle } from "lucide-react";
+import { Bell, Volume2, Shield, AlertTriangle, Volume2 as VolumeIcon } from "lucide-react";
+import { useAudioAlerts } from "@/hooks/useAudioAlerts";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
 
 interface AlertSystemProps {
   alertLevel: 0 | 1 | 2 | 3;
@@ -8,6 +11,9 @@ interface AlertSystemProps {
 }
 
 const AlertSystem = ({ alertLevel, fatigueLevel }: AlertSystemProps) => {
+  const [audioEnabled, setAudioEnabled] = useState(true);
+  const { playManualAlert } = useAudioAlerts(alertLevel, audioEnabled);
+  
   const stages = [
     {
       level: 1,
@@ -88,23 +94,34 @@ const AlertSystem = ({ alertLevel, fatigueLevel }: AlertSystemProps) => {
           <div>
             <h2 className="text-xl font-bold text-foreground">Alert Status</h2>
             <p className="text-sm text-muted-foreground">
-              3-Stage intervention system
+              3-Stage intervention system with audio alerts
             </p>
           </div>
         </div>
-        <Badge
-          className={`px-3 py-1 ${
-            alertLevel === 0
-              ? "bg-success text-success-foreground"
-              : alertLevel === 1
-              ? "bg-warning text-warning-foreground"
-              : alertLevel === 2
-              ? "bg-alert text-alert-foreground"
-              : "bg-destructive text-destructive-foreground"
-          }`}
-        >
-          Stage {alertLevel === 0 ? "-" : alertLevel}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAudioEnabled(!audioEnabled)}
+            className={audioEnabled ? "" : "opacity-50"}
+          >
+            <VolumeIcon className="w-4 h-4 mr-1" />
+            {audioEnabled ? "Audio On" : "Audio Off"}
+          </Button>
+          <Badge
+            className={`px-3 py-1 ${
+              alertLevel === 0
+                ? "bg-success text-success-foreground"
+                : alertLevel === 1
+                ? "bg-warning text-warning-foreground"
+                : alertLevel === 2
+                ? "bg-alert text-alert-foreground"
+                : "bg-destructive text-destructive-foreground"
+            }`}
+          >
+            Stage {alertLevel === 0 ? "-" : alertLevel}
+          </Badge>
+        </div>
       </div>
 
       <div className="mb-6 p-4 bg-background/50 rounded-lg">
