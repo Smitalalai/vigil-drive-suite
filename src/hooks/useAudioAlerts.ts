@@ -16,25 +16,25 @@ const ALERT_SOUNDS: Record<number, AudioAlertConfig> = {
     pattern: 'single',
   },
   1: {
-    frequency: 300, // Low frequency - gentle warning
-    duration: 0.3,
-    volume: 0.2,
+    frequency: 400, // Gentle, pleasant tone
+    duration: 0.4,
+    volume: 0.12,
     pattern: 'single',
-    interval: 8000, // Every 8 seconds
+    interval: 10000, // Every 10 seconds
   },
   2: {
-    frequency: 600, // Medium frequency - urgent warning
-    duration: 0.4,
-    volume: 0.3,
+    frequency: 550, // Moderate, attention-getting tone
+    duration: 0.5,
+    volume: 0.18,
     pattern: 'double',
-    interval: 4000, // Every 4 seconds
+    interval: 6000, // Every 6 seconds
   },
   3: {
-    frequency: 1200, // High frequency - critical alert
-    duration: 0.5,
-    volume: 0.4,
+    frequency: 700, // Urgent but not harsh
+    duration: 0.6,
+    volume: 0.25,
     pattern: 'continuous',
-    interval: 2000, // Every 2 seconds
+    interval: 3000, // Every 3 seconds
   },
 };
 
@@ -56,9 +56,11 @@ export const useAudioAlerts = (alertLevel: 0 | 1 | 2 | 3, enabled: boolean = tru
     gainNode.connect(audioContext.destination);
 
     oscillator.frequency.value = frequency;
-    oscillator.type = 'sine';
+    oscillator.type = 'sine'; // Sine wave is the softest, most pleasant
 
-    gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+    // Gentle fade in and fade out for smoother sound
+    gainNode.gain.setValueAtTime(0.01, audioContext.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(volume, audioContext.currentTime + duration * 0.1);
     gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
 
     oscillator.start(audioContext.currentTime);
@@ -67,10 +69,24 @@ export const useAudioAlerts = (alertLevel: 0 | 1 | 2 | 3, enabled: boolean = tru
 
   const speakWakeUp = () => {
     if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance('Wake up!');
-      utterance.rate = 1.2;
-      utterance.pitch = 1.2;
-      utterance.volume = 1;
+      // Cancel any ongoing speech
+      window.speechSynthesis.cancel();
+      
+      const utterance = new SpeechSynthesisUtterance('Please stay alert and take a break if needed');
+      utterance.rate = 0.9; // Slower, calmer pace
+      utterance.pitch = 1.0; // Normal, less alarming pitch
+      utterance.volume = 0.7; // Gentler volume
+      utterance.lang = 'en-US';
+      
+      // Try to use a more pleasant voice if available
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(v => 
+        v.name.includes('Female') || v.name.includes('Samantha') || v.name.includes('Natural')
+      );
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+      
       window.speechSynthesis.speak(utterance);
     }
   };
@@ -106,21 +122,21 @@ export const useAudioAlerts = (alertLevel: 0 | 1 | 2 | 3, enabled: boolean = tru
         break;
       
       case 'continuous':
-        // Play escalating frequency sweep (low to high) with "Wake Up" voice
-        const startFreq = config.frequency * 0.7;
-        const endFreq = config.frequency * 1.3;
+        // Play gentle escalating tones with voice alert
+        const startFreq = config.frequency * 0.85;
+        const endFreq = config.frequency * 1.15;
         
         [0, 1, 2].forEach((i) => {
           const freq = startFreq + (endFreq - startFreq) * (i / 2);
           setTimeout(() => {
-            playTone(freq, config.duration * 0.7, config.volume);
-          }, i * (config.duration * 1000 * 0.5));
+            playTone(freq, config.duration * 0.8, config.volume * 0.9);
+          }, i * (config.duration * 1000 * 0.6));
         });
         
-        // Add "Wake Up!" voice alert for critical level
+        // Add gentle voice alert for critical level
         setTimeout(() => {
           speakWakeUp();
-        }, 200);
+        }, 500);
         break;
     }
   };
