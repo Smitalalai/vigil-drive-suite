@@ -25,6 +25,8 @@ const FaceDetection = ({ onMetricsUpdate }: FaceDetectionProps) => {
   const [faceDetected, setFaceDetected] = useState(false);
   const [fatigueLevel, setFatigueLevel] = useState(0);
   const [alertLevel, setAlertLevel] = useState<0 | 1 | 2 | 3>(0);
+  const [mediaPipeLoading, setMediaPipeLoading] = useState(true);
+  const [mediaPipeError, setMediaPipeError] = useState<string | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -102,22 +104,52 @@ const FaceDetection = ({ onMetricsUpdate }: FaceDetectionProps) => {
 
   // Initialize MediaPipe Face Mesh
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      faceMeshRef.current = new FaceMesh({
-        locateFile: (file) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+    const initMediaPipe = async () => {
+      if (typeof window !== 'undefined') {
+        try {
+          setMediaPipeLoading(true);
+          setMediaPipeError(null);
+          
+          faceMeshRef.current = new FaceMesh({
+            locateFile: (file) => {
+              return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+            }
+          });
+          
+          faceMeshRef.current.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+          });
+          
+          faceMeshRef.current.onResults(onFaceMeshResults);
+          
+          // Wait a bit to ensure models start loading
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          setMediaPipeLoading(false);
+          
+          toast({
+            title: "Face Detection Ready",
+            description: "AI models loaded successfully",
+          });
+        } catch (error) {
+          console.error("MediaPipe initialization error:", error);
+          const errorMsg = "Failed to load face detection models. Please refresh the page.";
+          setMediaPipeError(errorMsg);
+          setMediaPipeLoading(false);
+          
+          toast({
+            title: "Initialization Error",
+            description: errorMsg,
+            variant: "destructive",
+          });
         }
-      });
-      
-      faceMeshRef.current.setOptions({
-        maxNumFaces: 1,
-        refineLandmarks: true,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-      });
-      
-      faceMeshRef.current.onResults(onFaceMeshResults);
-    }
+      }
+    };
+    
+    initMediaPipe();
     
     return () => {
       if (faceMeshRef.current) {
@@ -321,6 +353,23 @@ const FaceDetection = ({ onMetricsUpdate }: FaceDetectionProps) => {
     try {
       setCameraError(null);
       
+      if (mediaPipeError) {
+        toast({
+          title: "Cannot Start Camera",
+          description: "Face detection models failed to load. Please refresh the page.",
+          variant: "destructive",
+        });
+        return;
+      }
+      
+      if (mediaPipeLoading) {
+        toast({
+          title: "Please Wait",
+          description: "Face detection models are still loading...",
+        });
+        return;
+      }
+      
       if (videoRef.current && faceMeshRef.current) {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
@@ -435,11 +484,17 @@ const FaceDetection = ({ onMetricsUpdate }: FaceDetectionProps) => {
           onClick={isCameraActive ? stopCamera : startCamera}
           variant={isCameraActive ? "destructive" : "default"}
           size="sm"
+          disabled={mediaPipeLoading || !!mediaPipeError}
         >
           {isCameraActive ? (
             <>
               <CameraOff className="w-4 h-4 mr-2" />
               Stop Camera
+            </>
+          ) : mediaPipeLoading ? (
+            <>
+              <Camera className="w-4 h-4 mr-2 animate-pulse" />
+              Loading Models...
             </>
           ) : (
             <>
@@ -473,10 +528,34 @@ const FaceDetection = ({ onMetricsUpdate }: FaceDetectionProps) => {
         {!isCameraActive && (
           <div className="absolute inset-0 flex items-center justify-center bg-secondary/50 backdrop-blur-sm">
             <div className="text-center">
-              <Camera className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <p className="text-sm text-muted-foreground">
-                {cameraError || "Click 'Start Camera' to begin real-time face detection"}
-              </p>
+              {mediaPipeError ? (
+                <>
+                  <AlertTriangle className="w-16 h-16 text-destructive mx-auto mb-4" />
+                  <p className="text-lg font-semibold text-destructive mb-2">
+                    Face Detection Error
+                  </p>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {mediaPipeError}
+                  </p>
+                  <Button onClick={() => window.location.reload()} size="sm">
+                    Refresh Page
+                  </Button>
+                </>
+              ) : mediaPipeLoading ? (
+                <>
+                  <Camera className="w-16 h-16 text-muted-foreground mx-auto mb-4 animate-pulse" />
+                  <p className="text-sm text-muted-foreground">
+                    Loading AI models...
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Camera className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-sm text-muted-foreground">
+                    {cameraError || "Click 'Start Camera' to begin real-time face detection"}
+                  </p>
+                </>
+              )}
             </div>
           </div>
         )}
