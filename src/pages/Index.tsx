@@ -5,6 +5,7 @@ import AlertSystem from "@/components/AlertSystem";
 import MetricsChart from "@/components/MetricsChart";
 import SystemStatus from "@/components/SystemStatus";
 import FaceDetection from "@/components/FaceDetection";
+import AIBuddy from "@/components/AIBuddy";
 
 const Index = () => {
   const [alertLevel, setAlertLevel] = useState<0 | 1 | 2 | 3>(0);
@@ -78,6 +79,14 @@ const Index = () => {
             <SensorMonitoring alertLevel={alertLevel} />
           </div>
         </div>
+
+        {/* AI Wellness Buddy */}
+        <AIBuddy
+          fatigueLevel={fatigueLevel}
+          heartRate={heartRate}
+          stressLevel={stressLevel}
+          alertLevel={alertLevel}
+        />
 
         {/* Metrics Chart */}
         <MetricsChart
